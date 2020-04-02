@@ -9,86 +9,6 @@ import (
 	"sync"
 )
 
-//recType is a record type, as defined by
-type recType uint8
-
-const (
-	typeBeginRequest    recType = 1
-	typeAbortRequest    recType = 2
-	typeEndRequest      recType = 3
-	typeParams          recType = 4
-	typeStdin           recType = 5
-	typeStdout          recType = 6
-	typeStderr          recType = 7
-	typeData            recType = 8
-	typeGetValues       recType = 9
-	typeGetValuesResult recType = 10
-	typeUnknownType     recType = 11
-)
-
-// String implements fmt.Stringer
-func (t recType) String() string {
-	switch t {
-	case typeBeginRequest:
-		return "FCGI_BEGIN_REQUEST"
-
-	case typeAbortRequest:
-		return "FCGI_BEGIN_REQUEST"
-
-	case typeEndRequest:
-		return "FCGI_END_REQUEST"
-
-	case typeParams:
-		return "FCGI_PARAMS"
-
-	case typeStdin:
-		return "FCGI_STDIN"
-
-	case typeStdout:
-		return "FCGI_STDOUT"
-
-	case typeStderr:
-		return "FCGI_STDERR"
-
-	case typeData:
-		return "FCGI_DATA"
-
-	case typeGetValues:
-		return "FCGI_GET_VALUES"
-
-	case typeGetValuesResult:
-		return "FCGI_GET_VALUES_RESULT"
-
-	case typeUnknownType:
-		fallthrough
-
-	default:
-		return "FCGI_UNKNOWN_TYPE"
-	}
-}
-
-// GoString implements fmt.GoStringer
-func (t recType) GoString() string {
-	return t.String()
-}
-
-// keep the connection between web-server and responder open after request
-const flagKeepConn = 1
-
-const (
-	maxWrite = 65535 //maximum record body
-	maxPad   = 255
-)
-
-const (
-	statusRequestComplete = iota
-	statusCantMultiplex
-	statusOverloaded
-	statusUnknownRole
-)
-
-const headerLen = 8
-
 type header struct {
 	Version       uint8
 	Type          recType
@@ -96,23 +16,6 @@ type header struct {
 	ContentLength uint16
 	PaddingLength uint8
 	Reserved      uint8
-}
-
-type beginRequest struct {
-	role     uint16
-	flags    uint8
-	reserved [5]uint8
-}
-
-func (br *beginRequest) read(content []byte) error {
-	if len(content) != 8 {
-		return errors.New("fastcgi: invalid begin request record")
-	}
-
-	br.role = binary.BigEndian.Uint16(content)
-	br.flags = content[2]
-
-	return nil
 }
 
 //for padding so we don't have to allocate all the time
@@ -205,7 +108,7 @@ func (c *conn) writeBeginRequest(reqID uint16, role uint16, flags uint8) error {
 	b := [8]byte{
 		byte(role >> 8),
 		byte(role),
-		flags,
+		flags & 1,
 	}
 
 	return c.writeRecord(typeBeginRequest, reqID, b[:])

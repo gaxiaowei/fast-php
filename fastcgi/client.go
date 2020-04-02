@@ -11,80 +11,7 @@ import (
 	"sync"
 )
 
-//Roles specified in the fastcgi spec
-const (
-	RoleResponder uint16 = iota + 1
-)
-
-// Request hold information of a standard
-// FastCGI request
-type Request struct {
-	Raw      *http.Request
-	Role     uint16
-	Params   map[string]string
-	Stdin    io.ReadCloser
-	Data     io.ReadCloser
-	KeepConn bool
-}
-
-//NewRequest returns a standard FastCGI request
-func NewRequest(r *http.Request) (req *Request) {
-	req = &Request{
-		Raw:    r,
-		Role:   RoleResponder,
-		Params: make(map[string]string),
-	}
-
-	//if no http request, return here
-	if r == nil {
-		return
-	}
-
-	//pass body (io.ReadCloser) to stdio
-	req.Stdin = r.Body
-
-	return
-}
-
-type idPool struct {
-	IDs chan uint16
-}
-
-//AllocID implements Client.AllocID
-func (p *idPool) Alloc() uint16 {
-	return <-p.IDs
-}
-
-// ReleaseID implements Client.ReleaseID
-func (p *idPool) Release(id uint16) {
-	go func() {
-		// release the ID back to channel for reuse
-		// use goroutine to prev0, ent blocking ReleaseID
-		p.IDs <- id
-	}()
-}
-
-func newIDs(limit uint32) (p idPool) {
-	if limit == 0 || limit > 65536 {
-		limit = 65536
-	}
-
-	ids := make(chan uint16)
-
-	go func(maxID uint16) {
-		for i := uint16(0); i < maxID; i++ {
-			ids <- i
-		}
-
-		ids <- uint16(maxID)
-	}(uint16(limit - 1))
-
-	p.IDs = ids
-
-	return
-}
-
-//client is the default implementation of Client
+//client
 type client struct {
 	conn *conn
 	ids  idPool
@@ -99,12 +26,12 @@ func (c *client) writeRequest(reqID uint16, req *Request) (err error) {
 	}()
 
 	//write request header with specified role
-	if err = c.conn.writeBeginRequest(reqID, uint16(req.Role), 1); err != nil {
-		return err
+	if err = c.conn.writeBeginRequest(reqID, req.Role, uint8(req.KeepConn)); err != nil {
+		return
 	}
 
 	if err = c.conn.writePairs(typeParams, reqID, req.Params); err != nil {
-		return err
+		return
 	}
 
 	//write the stdin stream
@@ -123,7 +50,7 @@ func (c *client) writeRequest(reqID uint16, req *Request) (err error) {
 			if err == io.EOF {
 				err = nil
 			} else if err != nil {
-				stdinWriter.Close()
+				_ = stdinWriter.Close()
 				return
 			}
 
@@ -134,7 +61,7 @@ func (c *client) writeRequest(reqID uint16, req *Request) (err error) {
 			_, err = stdinWriter.Write(p[:count])
 
 			if err != nil {
-				stdinWriter.Close()
+				_ = stdinWriter.Close()
 				return
 			}
 		}
@@ -263,7 +190,7 @@ func (c *client) Close() (err error) {
 	err = c.conn.Close()
 	c.conn = nil
 
-	return
+	return err
 }
 
 //NewResponsePipe returns an initialized new ResponsePipe struct
@@ -275,8 +202,7 @@ func NewResponsePipe() (p *ResponsePipe) {
 	return
 }
 
-// ResponsePipe contains readers and writers that handles
-// all FastCGI output streams
+//ResponsePipe contains readers and writers that handles
 type ResponsePipe struct {
 	stdOutReader io.Reader
 	stdOutWriter io.WriteCloser
@@ -286,8 +212,8 @@ type ResponsePipe struct {
 
 // Close close all writers
 func (pipes *ResponsePipe) Close() {
-	pipes.stdOutWriter.Close()
-	pipes.stdErrWriter.Close()
+	_ = pipes.stdOutWriter.Close()
+	_ = pipes.stdErrWriter.Close()
 }
 
 // WriteTo writes the given output into http.ResponseWriter
@@ -323,12 +249,13 @@ func (pipes *ResponsePipe) writeError(w io.Writer) (err error) {
 	if err != nil {
 		err = fmt.Errorf("gofast: copy error: %v", err.Error())
 	}
+
 	return
 }
 
-// writeTo writes the given output into http.ResponseWriter
+//writeTo writes the given output into http.ResponseWriter
 func (pipes *ResponsePipe) writeResponse(w http.ResponseWriter) (err error) {
-	linebody := bufio.NewReaderSize(pipes.stdOutReader, 1024)
+	lineBody := bufio.NewReaderSize(pipes.stdOutReader, 1024)
 	headers := make(http.Header)
 	statusCode := 0
 	headerLines := 0
@@ -337,51 +264,61 @@ func (pipes *ResponsePipe) writeResponse(w http.ResponseWriter) (err error) {
 	for {
 		var line []byte
 		var isPrefix bool
-		line, isPrefix, err = linebody.ReadLine()
+
+		line, isPrefix, err = lineBody.ReadLine()
 		if isPrefix {
 			w.WriteHeader(http.StatusInternalServerError)
 			err = fmt.Errorf("gofast: long header line from subprocess")
 			return
 		}
+
 		if err == io.EOF {
 			break
 		}
+
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			err = fmt.Errorf("gofast: error reading headers: %v", err)
 			return
 		}
+
 		if len(line) == 0 {
 			sawBlankLine = true
 			break
 		}
+
 		headerLines++
 		parts := strings.SplitN(string(line), ":", 2)
 		if len(parts) < 2 {
 			err = fmt.Errorf("gofast: bogus header line: %s", string(line))
 			return
 		}
+
 		header, val := parts[0], parts[1]
 		header = strings.TrimSpace(header)
 		val = strings.TrimSpace(val)
+
 		switch {
-		case header == "Status":
-			if len(val) < 3 {
-				err = fmt.Errorf("gofast: bogus status (short): %q", val)
-				return
-			}
-			var code int
-			code, err = strconv.Atoi(val[0:3])
-			if err != nil {
-				err = fmt.Errorf("gofast: bogus status: %q\nline was %q",
-					val, line)
-				return
-			}
-			statusCode = code
-		default:
-			headers.Add(header, val)
+			case header == "Status":
+				if len(val) < 3 {
+					err = fmt.Errorf("gofast: bogus status (short): %q", val)
+					return
+				}
+
+				var code int
+				code, err = strconv.Atoi(val[0:3])
+
+				if err != nil {
+					err = fmt.Errorf("gofast: bogus status: %q\nline was %q", val, line)
+					return
+				}
+
+				statusCode = code
+			default:
+				headers.Add(header, val)
 		}
 	}
+
 	if headerLines == 0 || !sawBlankLine {
 		w.WriteHeader(http.StatusInternalServerError)
 		err = fmt.Errorf("gofast: no headers")
@@ -389,12 +326,6 @@ func (pipes *ResponsePipe) writeResponse(w http.ResponseWriter) (err error) {
 	}
 
 	if loc := headers.Get("Location"); loc != "" {
-		/*
-			if strings.HasPrefix(loc, "/") && h.PathLocationHandler != nil {
-				h.handleInternalRedirect(rw, req, loc)
-				return
-			}
-		*/
 		if statusCode == 0 {
 			statusCode = http.StatusFound
 		}
@@ -420,10 +351,11 @@ func (pipes *ResponsePipe) writeResponse(w http.ResponseWriter) (err error) {
 	}
 
 	w.WriteHeader(statusCode)
+	_, err = io.Copy(w, lineBody)
 
-	_, err = io.Copy(w, linebody)
 	if err != nil {
 		err = fmt.Errorf("gofast: copy error: %v", err)
 	}
+
 	return
 }

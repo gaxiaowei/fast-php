@@ -3,13 +3,22 @@ package main
 import (
 	"log"
 	"net/http"
+	"strings"
 )
 
 type HttpHandle struct {
 }
 
 func (h HttpHandle) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	w.Write([]byte("Hello World"))
+	for key, val := range r.Header {
+		w.Write([]byte(key + ": "))
+		w.Write([]byte(strings.Join(val, ",")))
+		w.Write([]byte("\r\n"))
+	}
+
+	if r.Header.Get("Content-Type") {
+		
+	}
 }
 
 func main() {
