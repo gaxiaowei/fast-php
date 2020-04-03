@@ -4,8 +4,6 @@ import (
 	"fmt"
 	json "github.com/json-iterator/go"
 	"github.com/sirupsen/logrus"
-	"github.com/spiral/roadrunner"
-	"github.com/spiral/roadrunner/service/http/attributes"
 	"io/ioutil"
 	"net"
 	"net/http"
@@ -76,7 +74,7 @@ func NewRequest(r *http.Request, cfg *UploadsConfig) (req *Request, err error) {
 		Header:     r.Header,
 		Cookies:    make(map[string]string),
 		RawQuery:   r.URL.RawQuery,
-		Attributes: attributes.All(r),
+		Attributes: AttrAll(r),
 	}
 
 	for _, c := range r.Cookies() {

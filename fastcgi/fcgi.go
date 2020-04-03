@@ -56,7 +56,6 @@ func (rec *record) content() []byte {
 	return rec.buf[:rec.h.ContentLength]
 }
 
-//conn sends records over rwc
 type conn struct {
 	mutex sync.Mutex
 	rwc   io.ReadWriteCloser
@@ -79,7 +78,6 @@ func (c *conn) Close() error {
 	return c.rwc.Close()
 }
 
-//writeRecord writes and sends a single record.
 func (c *conn) writeRecord(recType recType, reqID uint16, b []byte) error {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
