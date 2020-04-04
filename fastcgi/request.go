@@ -5,7 +5,6 @@ import (
 	"net/http"
 )
 
-//Request hold information of a standard
 type Request struct {
 	Raw      *http.Request
 	Role     uint16

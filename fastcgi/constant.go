@@ -1,7 +1,8 @@
 package fastcgi
 
-//recType is a record type, as defined by
 type recType uint8
+
+const version  uint8 = 1
 
 const (
 	typeBeginRequest    recType = 1
@@ -17,7 +18,6 @@ const (
 	typeUnknownType     recType = 11
 )
 
-// String implements fmt.Stringer
 func (t recType) String() string {
 	switch t {
 	case typeBeginRequest:
@@ -58,21 +58,24 @@ func (t recType) String() string {
 	}
 }
 
-// GoString implements fmt.GoStringer
 func (t recType) GoString() string {
 	return t.String()
 }
 
 const (
-	maxWrite = 65535 //maximum record body
-	maxPad   = 255
+	//maximum record body
+	maxWrite = 65535
+
+	maxPad = 255
 )
 
 const (
+	//role type
 	RoleResponder uint16 = iota + 1
 )
 
 const (
+	//service status
 	statusRequestComplete = iota
 	statusCantMultiplex
 	statusOverloaded

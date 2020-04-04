@@ -9,6 +9,8 @@ import (
 	"sync"
 )
 
+var pad [maxPad]byte
+
 type header struct {
 	Version       uint8
 	Type          recType
@@ -18,42 +20,38 @@ type header struct {
 	Reserved      uint8
 }
 
-//for padding so we don't have to allocate all the time
-//not synchronized because we don't care what the contents are
-var pad [maxPad]byte
-
 func (h *header) init(recType recType, reqID uint16, contentLength int) {
-	h.Version = 1
+	h.Version = version
 	h.Type = recType
 	h.ID = reqID
 	h.ContentLength = uint16(contentLength)
 	h.PaddingLength = uint8(-contentLength & 7)
 }
 
-type record struct {
+type serviceRecord struct {
 	h   header
 	buf [maxWrite + maxPad]byte
 }
 
-func (rec *record) read(r io.Reader) (err error) {
-	if err = binary.Read(r, binary.BigEndian, &rec.h); err != nil {
+func (sr *serviceRecord) read(r io.Reader) (err error) {
+	if err = binary.Read(r, binary.BigEndian, &sr.h); err != nil {
 		return err
 	}
 
-	if rec.h.Version != 1 {
-		return errors.New("fastcgi: invalid header version")
+	if sr.h.Version != version {
+		return errors.New("invalid header version")
 	}
 
-	n := int(rec.h.ContentLength) + int(rec.h.PaddingLength)
-	if _, err = io.ReadFull(r, rec.buf[:n]); err != nil {
+	n := int(sr.h.ContentLength) + int(sr.h.PaddingLength)
+	if _, err = io.ReadFull(r, sr.buf[:n]); err != nil {
 		return err
 	}
 
 	return nil
 }
 
-func (rec *record) content() []byte {
-	return rec.buf[:rec.h.ContentLength]
+func (sr *serviceRecord) body() []byte {
+	return sr.buf[:sr.h.ContentLength]
 }
 
 type conn struct {
@@ -193,7 +191,6 @@ func encodeSize(b []byte, size uint32) int {
 	return 1
 }
 
-//bufWriter encapsulates bufio.Writer but also closes the underlying stream when
 type bufWriter struct {
 	closer io.Closer
 	*bufio.Writer

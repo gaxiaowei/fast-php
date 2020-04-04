@@ -11,22 +11,20 @@ import (
 	"sync"
 )
 
-//client
 type client struct {
 	conn *conn
 	ids  idPool
 }
 
-//writeRequest writes params and stdin to the FastCGI application
 func (c *client) writeRequest(reqID uint16, req *Request) (err error) {
 	defer func() {
 		if err != nil {
+			//end request
 			_ = c.conn.writeAbortRequest(reqID)
 		}
 	}()
 
-	//write request header with specified role
-	if err = c.conn.writeBeginRequest(reqID, req.Role, uint8(req.KeepConn)); err != nil {
+	if err = c.conn.writeBeginRequest(reqID, req.Role, req.KeepConn); err != nil {
 		return
 	}
 
@@ -34,7 +32,6 @@ func (c *client) writeRequest(reqID uint16, req *Request) (err error) {
 		return
 	}
 
-	//write the stdin stream
 	stdinWriter := newWriter(c.conn, typeStdin, reqID)
 	if req.Stdin != nil {
 		defer func() {
@@ -74,11 +71,8 @@ func (c *client) writeRequest(reqID uint16, req *Request) (err error) {
 	return nil
 }
 
-// readResponse read the FastCGI stdout and stderr, then write
-// to the response pipe. Protocol error will also be written
-// to the error writer in ResponsePipe.
 func (c *client) readResponse(ctx context.Context, resp *ResponsePipe, req *Request) (err error) {
-	var rec record
+	var rec serviceRecord
 	done := make(chan int)
 
 	go func() {
@@ -91,10 +85,10 @@ func (c *client) readResponse(ctx context.Context, resp *ResponsePipe, req *Requ
 
 			switch rec.h.Type {
 				case typeStdout:
-					resp.stdOutWriter.Write(rec.content())
+					resp.stdOutWriter.Write(rec.body())
 
 				case typeStderr:
-					resp.stdErrWriter.Write(rec.content())
+					resp.stdErrWriter.Write(rec.body())
 
 				case typeEndRequest:
 					break readLoop
@@ -118,7 +112,6 @@ func (c *client) readResponse(ctx context.Context, resp *ResponsePipe, req *Requ
 	return
 }
 
-//Do implements Client.Do
 func (c *client) Do(req *Request) (resp *ResponsePipe, err error) {
 	if c.conn == nil {
 		err = fmt.Errorf("client connection has been closed")
@@ -193,7 +186,13 @@ func (c *client) Close() (err error) {
 	return err
 }
 
-//NewResponsePipe returns an initialized new ResponsePipe struct
+type ResponsePipe struct {
+	stdOutReader io.Reader
+	stdOutWriter io.WriteCloser
+	stdErrReader io.Reader
+	stdErrWriter io.WriteCloser
+}
+
 func NewResponsePipe() (p *ResponsePipe) {
 	p = new(ResponsePipe)
 	p.stdOutReader, p.stdOutWriter = io.Pipe()
@@ -202,21 +201,11 @@ func NewResponsePipe() (p *ResponsePipe) {
 	return
 }
 
-//ResponsePipe contains readers and writers that handles
-type ResponsePipe struct {
-	stdOutReader io.Reader
-	stdOutWriter io.WriteCloser
-	stdErrReader io.Reader
-	stdErrWriter io.WriteCloser
-}
-
-// Close close all writers
 func (pipes *ResponsePipe) Close() {
 	_ = pipes.stdOutWriter.Close()
 	_ = pipes.stdErrWriter.Close()
 }
 
-// WriteTo writes the given output into http.ResponseWriter
 func (pipes *ResponsePipe) WriteTo(rw http.ResponseWriter, ew io.Writer) (err error) {
 	chErr := make(chan error, 2)
 	defer close(chErr)
@@ -235,6 +224,7 @@ func (pipes *ResponsePipe) WriteTo(rw http.ResponseWriter, ew io.Writer) (err er
 	}()
 
 	wg.Wait()
+
 	for i := 0; i < 2; i++ {
 		if err = <-chErr; err != nil {
 			return
@@ -253,7 +243,6 @@ func (pipes *ResponsePipe) writeError(w io.Writer) (err error) {
 	return
 }
 
-//writeTo writes the given output into http.ResponseWriter
 func (pipes *ResponsePipe) writeResponse(w http.ResponseWriter) (err error) {
 	lineBody := bufio.NewReaderSize(pipes.stdOutReader, 1024)
 	headers := make(http.Header)
@@ -341,9 +330,6 @@ func (pipes *ResponsePipe) writeResponse(w http.ResponseWriter) (err error) {
 		statusCode = http.StatusOK
 	}
 
-	// Copy headers to rw's headers, after we've decided not to
-	// go into handleInternalRedirect, which won't want its rw
-	// headers to have been touched.
 	for k, vv := range headers {
 		for _, v := range vv {
 			w.Header().Add(k, v)

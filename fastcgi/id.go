@@ -4,12 +4,10 @@ type idPool struct {
 	ids chan uint16
 }
 
-//AllocID implements Client.AllocID
 func (p *idPool) Alloc() uint16 {
 	return <-p.ids
 }
 
-// ReleaseID implements Client.ReleaseID
 func (p *idPool) Release(id uint16) {
 	go func() {
 		p.ids <- id
